@@ -1,5 +1,5 @@
 # Re-export the primary functions (explicit, stable API)
-from .create_zarr import create_zarr, data_preprocessing
+from .preprocessing import create_zarr, data_preprocessing
 from .utils import crop_to_multiple, unstdize, compute_mae, compute_mse
 
 # Expose the viz module as a submodule (lazy import by users)
