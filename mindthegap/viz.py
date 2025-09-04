@@ -329,3 +329,139 @@ def plot_prediction_gapfill(
     plt.subplots_adjust(top=0.96)
     plt.show()
 
+
+
+def yearly_MAD(zarr_stdized, zarr_label, year):
+    mean_std = np.load(f'{datadir}/{zarr_label}.npy',allow_pickle='TRUE').item()
+    mean, std = mean_std['CHL'][0], mean_std['CHL'][1]
+    time_range = slice(f'{year}-01-01', f'{year}-12-31')
+    zarr_time_range = zarr_stdized.sel(time=time_range)
+
+    mae = []
+
+    X = []
+    X_vars = list(zarr_stdized.keys())
+    X_vars.remove('CHL')
+    for var in X_vars:
+        var = zarr_time_range[var].to_numpy()
+        X.append(np.where(np.isnan(var), 0.0, var))
+    X = np.array(X)
+    X = np.moveaxis(X, 0, -1)
+
+    true_CHL = np.log(zarr_ds.sel(time=time_range)['CHL_cmes-level3'].to_numpy())
+    fake_cloud_flag = zarr_time_range.fake_cloud_flag.to_numpy()
+    predicted_CHL = model.predict(X, verbose=0)
+    predicted_CHL = predicted_CHL.reshape(predicted_CHL.shape[:-1])
+    predicted_CHL = unstdize(predicted_CHL, mean, std)
+    predicted_CHL = np.where(fake_cloud_flag == 0, np.nan, predicted_CHL)
+    for true, pred in zip(true_CHL, predicted_CHL):
+        mae.append(compute_mae(true, pred))
+    
+    fig, ax1 = plt.subplots()
+    
+    color = 'tab:red'
+    ax1.set_xlabel('Month')
+    ax1.set_ylabel('MAD of log (Globcolour l3) - log (U-Net)', color=color)
+    ax1.plot(mae, color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    tick_pos = []
+    tick_label = []
+    total_day = 1
+    tick_pos.append(total_day + 15)
+    tick_label.append('1')
+    for month in range(1, 12):
+        total_day += calendar.monthrange(year, month)[1]
+        plt.axvline(total_day, color='grey', alpha=0.3)
+        tick_pos.append(total_day + 15)
+        tick_label.append(str(month+1))
+    plt.title(f'Observed (Level-3) CHL vs U-Net Predictions Year {year}')
+    plt.xlim(1, len(mae))
+    plt.xticks(tick_pos, tick_label)
+    
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.show()
+
+
+
+def get_cloud_perc(zarr_stdized, year):
+    zarr_time_range = zarr_stdized.sel(time=str(year))
+
+    non_land_cnt = len(np.where(zarr_time_range['land_flag'][0] == 0)[0])
+    clouds = zarr_time_range['real_cloud_flag'].data
+    cloud_cnt = np.sum(clouds == 1, axis=(1, 2)).compute()
+    cloud_perc = cloud_cnt / non_land_cnt
+
+    return cloud_perc
+    
+
+def yearly_MAD_vs_cloud(zarr_stdized, zarr_label, model, year):
+    mean_std = np.load(f'{datadir}/{zarr_label}.npy',allow_pickle='TRUE').item()
+    mean, std = mean_std['CHL'][0], mean_std['CHL'][1]
+    time_range = slice(f'{year}-01-01', f'{year}-12-31')
+
+    zarr_time_range = zarr_stdized.sel(time=time_range)
+    
+    X = []
+    X_vars = list(zarr_stdized.keys())
+    X_vars.remove('CHL')
+    X_vars[X_vars.index('masked_CHL')] = 'CHL'
+    X_vars[X_vars.index('real_cloud_flag')] = 'a'
+    X_vars[X_vars.index('fake_cloud_flag')] = 'real_cloud_flag'
+    X_vars[X_vars.index('a')] = 'fake_cloud_flag'
+    for var in X_vars:
+        var = zarr_time_range[var].to_numpy()
+        X.append(np.where(np.isnan(var), 0.0, var))
+    valid_CHL_ind = X_vars.index('valid_CHL_flag')
+    X[valid_CHL_ind] = da.where(X[X_vars.index('fake_cloud_flag')] == 1, 1, X[valid_CHL_ind]) 
+    X[X_vars.index('fake_cloud_flag')] = np.zeros(X[0].shape)
+    X_masked_CHL = np.log(zarr_ds.sel(time=time_range)['CHL_cmes-level3'].to_numpy())
+    X_masked_CHL = (X_masked_CHL - da.full(X_masked_CHL.shape, mean_std['masked_CHL'][0])) / da.full(X_masked_CHL.shape, mean_std['masked_CHL'][1])
+    X_vars[X_vars.index('CHL')] = da.where(da.isnan(X_masked_CHL), 0.0, X_masked_CHL)
+    X = np.array(X)
+    X = np.moveaxis(X, 0, -1)
+
+    true_CHL = np.log(zarr_ds.sel(time=time_range)['CHL_cmes-gapfree'].to_numpy())            
+    # fake_cloud_flag = zarr_date.fake_cloud_flag.to_numpy()
+    predicted_CHL = model.predict(X, verbose=0)
+    predicted_CHL = predicted_CHL.reshape(predicted_CHL.shape[:-1])
+    predicted_CHL = unstdize(predicted_CHL, mean, std)
+    flag = zarr_ds.sel(time=str(year))['CHL_cmes-level3'].to_numpy()
+    predicted_CHL = np.where(~np.isnan(flag), np.nan, predicted_CHL)
+    mae = []
+    for true, pred in zip(true_CHL, predicted_CHL):
+        mae.append(compute_mae(true, pred))
+    
+    cloud_perc = get_cloud_perc(zarr_stdized, year)
+    
+    fig, ax1 = plt.subplots()
+    
+    color = 'tab:red'
+    ax1.set_xlabel('Month')
+    ax1.set_ylabel('MAD of log (Globcolour l4) - log (U-Net)', color=color)
+    ax1.plot(mae, color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+    
+    ax2 = ax1.twinx()  # instantiate a second Axes that shares the same x-axis
+    
+    color = 'tab:blue'
+    ax2.set_ylabel('Cloud Percentage', color=color)  # we already handled the x-label with ax1
+    ax2.plot(cloud_perc, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    tick_pos = []
+    tick_label = []
+    total_day = 1
+    tick_pos.append(total_day + 15)
+    tick_label.append('1')
+    for month in range(1, 12):
+        total_day += calendar.monthrange(year, month)[1]
+        plt.axvline(total_day, color='grey', alpha=0.3)
+        tick_pos.append(total_day + 15)
+        tick_label.append(str(month+1))
+    plt.title(f'Copernicus GlobColour Gapfree CHL vs U-Net Predictions\nMAD vs Cloud Percentage Year {year}')
+    plt.xlim(1, len(mae))
+    plt.xticks(tick_pos, tick_label)
+    
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.show()
