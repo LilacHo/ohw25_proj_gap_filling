@@ -1,5 +1,6 @@
 from typing import Union
 import xarray as xr
+import numpy as np
 
 def crop_to_multiple(
     ds: Union[xr.Dataset, xr.DataArray],
@@ -97,7 +98,48 @@ def crop_to_multiple(
     # isel preserves coords/attrs and is lazy for dask-backed arrays
     return ds.isel({lat: sl_lat, lon: sl_lon})
 
-import numpy as np
+
+def data_split(zarr_stdized, train_year, train_range, val_range, test_range):
+    X_vars = list(zarr_stdized.keys())
+    X_vars.remove('CHL')
+    
+    zarr_train = zarr_stdized.sel(time=slice(f'{train_year}-01-01', f'{train_year+train_range}-01-01'))
+    X_train = []
+    for var in X_vars:
+        var = zarr_train[var].to_numpy()
+        X_train.append(np.where(np.isnan(var), 0.0, var))
+    y_train = zarr_train.CHL.to_numpy()
+    y_train = np.where(np.isnan(y_train), 0.0, y_train)
+    X_train = np.array(X_train)
+    X_train = np.moveaxis(X_train, 0, -1)
+    del zarr_train
+    
+    zarr_val = zarr_stdized.sel(time=slice(f'{train_year+train_range}-01-01', f'{train_year+train_range+val_range}-01-01'))
+    X_val = []
+    for var in X_vars:
+        var = zarr_val[var].to_numpy()
+        X_val.append(np.where(np.isnan(var), 0.0, var))
+    y_val = zarr_val.CHL.to_numpy()
+    y_val = np.where(np.isnan(y_val), 0.0, y_val)
+    X_val = np.array(X_val)
+    X_val = np.moveaxis(X_val, 0, -1)
+    del zarr_val
+    
+    zarr_test = zarr_stdized.sel(time=slice(f'{train_year+train_range+val_range}-01-01', f'{train_year+train_range+val_range+test_range}-01-01'))
+    X_test= []
+    for var in X_vars:
+        var = zarr_test[var].to_numpy()
+        X_test.append(np.where(np.isnan(var), 0.0, var))
+    y_test = zarr_test.CHL.to_numpy()
+    y_test = np.where(np.isnan(y_test), 0.0, y_test)
+    X_test = np.array(X_test)
+    X_test = np.moveaxis(X_test, 0, -1)
+    del zarr_test, var
+
+    return (X_train, y_train, 
+            X_val, y_val,
+            X_test, y_test)
+
 
 # Helper functions in mindthegap
 # - `unstdize`: unstandardize model outputs back to the original scale

@@ -6,6 +6,28 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from pathlib import Path
 from typing import Sequence, Union
+import dask.array as da
+
+
+
+def plot_losses(history):
+    history_keys = list(history.history.keys())
+    plot_num = len(history_keys) // 2
+    plt.figure(figsize=(5 * plot_num, 4))
+    for i in range(plot_num):
+        plt.subplot(1, plot_num, i + 1)
+        train_key = history_keys[i]
+        val_key = history_keys[i + plot_num]
+        plt.plot(history.history[train_key], label=f'Train {train_key}')
+        plt.plot(history.history[val_key], label=f'Validation {val_key[4:]}')
+        plt.title(train_key)
+        plt.xlabel('Epoch')
+        plt.ylabel(train_key)
+        plt.legend(loc='upper right')
+        plt.grid(True)
+    plt.show()
+
+
 
 def plot_prediction_observed(
     zarr_stdized,
@@ -163,13 +185,7 @@ def plot_prediction_observed(
 
     plt.show()
 
-import numpy as np
-import dask.array as da
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 
-from .utils import unstdize
 
 def plot_prediction_gapfill(
     zarr_stdized, 
